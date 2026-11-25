@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Unconfirmed</string>
+    <color name="ic_launcher_background">#0C0F0D</color>
+
+    <style name="Theme.Unconfirmed" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

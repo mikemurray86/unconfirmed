@@ -1,0 +1,23 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Viewfinder brackets, kept inside the 66dp circle launchers always show. -->
+    <path
+        android:pathData="M31,39V31H39M69,31H77V39M77,69V77H69M39,77H31V69"
+        android:strokeWidth="2.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- The silhouette from the encounter screen. -->
+    <group
+        android:scaleX="0.38"
+        android:scaleY="0.38"
+        android:translateX="35"
+        android:translateY="33.5">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M50,18L55,28L54,38L92,22L82,44L70,44L60,52L58,70L64,92L57,92L50,74L43,92L36,92L42,70L40,52L30,44L18,44L8,22L46,38L45,28Z" />
+    </group>
+</vector>

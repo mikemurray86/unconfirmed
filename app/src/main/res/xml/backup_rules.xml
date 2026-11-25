@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Auto Backup on Android 8 to 11. Only the game's progress and settings go: the journal, the case
+    under way, the paused cases and the sound setting. The last state lookup lives in place.xml,
+    which isn't listed, so it stays on the phone. Keep this in step with data_extraction_rules.xml.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="game.xml" />
+</full-backup-content>

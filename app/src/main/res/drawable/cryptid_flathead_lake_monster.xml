@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Flathead Lake Monster: a neck and a row of humps above the waterline. Placeholder art, drawn facing left in a 100-unit box: a dark silhouette, a
+     lighter layer of detail, moonlight along the upper-left edges, and eyeshine. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="100dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <path
+        android:fillColor="#0B0B0B"
+        android:pathData="M10,70C12,50 14,36 22,30C26,27 33,28 35,32L31,35C25,37 23,50 25,70Z" />
+    <path
+        android:fillColor="#0B0B0B"
+        android:pathData="M34,70C38,50 52,50 56,70ZM61,70C64,55 74,55 78,70ZM82,70C84,61 90,61 92,70Z" />
+    <path
+        android:strokeColor="#3A352F"
+        android:strokeAlpha="0.9"
+        android:strokeWidth="0.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M13,52l2,-1M14,46l2,-1M16,40l2,-1M40,64q5,-4 10,0M42,68q4,-3 8,0M64,67q4,-3 9,0M85,68q2,-2 4,0M30,33.5L35,32" />
+    <path
+        android:strokeColor="#A39C8E"
+        android:strokeAlpha="0.45"
+        android:strokeWidth="0.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M11,66C13,50 15,37 22,31M38,58C41,52 49,52 52,58M63.5,63C66,58 72,58 75.5,63M83.5,66C85,63 89,63 90.5,66" />
+    <path
+        android:fillColor="#0B0B0B"
+        android:fillAlpha="0.5"
+        android:pathData="M4,70L96,70L96,73L4,73Z" />
+    <path
+        android:strokeColor="#0B0B0B"
+        android:strokeAlpha="0.45"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,75l12,0M14,78l9,0M16,81l6,0M36,75l18,0M39,78l12,0M63,75l14,0M66,78l8,0M83,75l8,0" />
+    <path
+        android:strokeColor="#C9D6D8"
+        android:strokeAlpha="0.4"
+        android:strokeWidth="0.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M28,74l6,0M57,74l4,0M79,74l3,0M6,76l4,0" />
+    <path
+        android:fillColor="#9BE564"
+        android:fillAlpha="0.3"
+        android:pathData="M26.8,31a2.2,2.2 0,1 1,4.4,0a2.2,2.2 0,1 1,-4.4,0" />
+    <path
+        android:fillColor="#9BE564"
+        android:pathData="M28.2,31a0.8,0.8 0,1 1,1.6,0a0.8,0.8 0,1 1,-1.6,0" />
+</vector>
