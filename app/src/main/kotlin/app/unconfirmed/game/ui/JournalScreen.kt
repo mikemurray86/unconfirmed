@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -24,12 +24,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -72,24 +74,30 @@ private val MARGIN = 40.dp
  * behind it.
  */
 @Composable
-fun JournalScreen(entries: List<JournalEntry>, areaState: String?, onBack: () -> Unit) {
+fun JournalScreen(entries: List<JournalEntry>, areaState: String?, onOpenOptions: () -> Unit, onBack: () -> Unit) {
     var openCreatureId by rememberSaveable { mutableStateOf<String?>(null) }
     val pages = journalPages(entries, areaState)
     val open = pages.firstOrNull { it.creatureId == openCreatureId }
 
     BackHandler { if (open != null) openCreatureId = null else onBack() }
 
+    if (sideBySide()) {
+        OpenJournal(pages, entries, areaState, open, onBack, onOpenOptions) { openCreatureId = it }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .desk()
-            .systemBarsPadding()
+            .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
+            .readable()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (open == null) {
-            InkButton("← Back", onBack, fill = Paper)
+            JournalTopBar(onBack, onOpenOptions)
             JournalIndex(pages, entries, areaState) { openCreatureId = it }
         } else {
             InkButton("← Back to the journal", { openCreatureId = null }, fill = Paper)
@@ -97,6 +105,75 @@ fun JournalScreen(entries: List<JournalEntry>, areaState: String?, onBack: () ->
         }
     }
 }
+
+/**
+ * The journal lying open on a wide screen: the contents on the left-hand page and the creature
+ * picked from them on the right, each page scrolling on its own.
+ */
+@Composable
+private fun OpenJournal(
+    pages: List<CreaturePage>,
+    entries: List<JournalEntry>,
+    areaState: String?,
+    open: CreaturePage?,
+    onBack: () -> Unit,
+    onOpenOptions: () -> Unit,
+    onOpen: (String) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .desk()
+            .safeDrawingPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        JournalTopBar(onBack, onOpenOptions)
+        Row(
+            Modifier.weight(1f).fillMaxWidth().readable(SPREAD_WIDTH),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
+            ) {
+                JournalIndex(pages, entries, areaState, selected = open?.creatureId, onOpen = onOpen)
+            }
+            // A fresh scroll for each creature, so turning to one starts at the top of its page.
+            key(open?.creatureId) {
+                Column(
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    if (open != null) {
+                        CreatureDetail(open)
+                    } else {
+                        NotebookPage(seed = 22) {
+                            Text(
+                                if (pages.isEmpty()) "Nothing to write up yet." else "Pick an entry from the contents.",
+                                fontFamily = HandFont,
+                                fontSize = 20.sp,
+                                color = BluePencil,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Back to the desk, and the way to the game's options, which live at the back of the journal. */
+@Composable
+private fun JournalTopBar(onBack: () -> Unit, onOpenOptions: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        InkButton("← Back", onBack, fill = Paper)
+        Spacer(Modifier.weight(1f))
+        InkButton("Options", onOpenOptions, fill = Paper)
+    }
+}
+
+/** The widest the open journal's two pages go together, so they read as a notebook on a big screen. */
+private val SPREAD_WIDTH = 1100.dp
 
 @Composable
 private fun NotebookPage(seed: Int, content: @Composable () -> Unit) {
@@ -115,6 +192,8 @@ private fun JournalIndex(
     pages: List<CreaturePage>,
     entries: List<JournalEntry>,
     areaState: String?,
+    /** The creature open on the facing page, when the journal lies open on a wide screen. */
+    selected: String? = null,
     onOpen: (String) -> Unit,
 ) {
     NotebookPage(seed = 21) {
@@ -132,7 +211,7 @@ private fun JournalIndex(
         )
         areaState?.let { Frontier(it, entries) }
         Spacer(Modifier.height(4.dp))
-        pages.forEach { page -> CreatureRow(page, onOpen) }
+        pages.forEach { page -> CreatureRow(page, page.creatureId == selected, onOpen) }
     }
 }
 
@@ -163,10 +242,17 @@ private fun Frontier(home: String, entries: List<JournalEntry>) {
 
 /** One creature on the contents page: its snapshot, its name and the best stamp it's earned. */
 @Composable
-private fun CreatureRow(page: CreaturePage, onOpen: (String) -> Unit) {
+private fun CreatureRow(page: CreaturePage, selected: Boolean, onOpen: (String) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            // The open one is marked the way a reader would: a pencil line down the margin.
+            .drawBehind {
+                if (selected) {
+                    val x = -MARGIN.toPx() / 2
+                    drawLine(BluePencil, Offset(x, 4.dp.toPx()), Offset(x, size.height - 4.dp.toPx()), 3.dp.toPx())
+                }
+            }
             .semantics { contentDescription = "${page.name}, ${(page.best ?: JournalRank.RUMORED).label}" }
             .clickable(role = Role.Button) { onOpen(page.creatureId) }
             .padding(vertical = 6.dp),

@@ -29,12 +29,18 @@ android {
         applicationId = "app.unconfirmed.game"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.1.1"
 
         // MET Norway blocks weather requests whose User-Agent has no contact. With an empty contact,
         // the game skips the weather and shows clear skies.
         buildConfigField("String", "GAME_CONTACT", "\"$gameContact\"")
+
+        // The AdMob app ID is public: it goes in the manifest of every build.
+        manifestPlaceholders["admobAppId"] = "ca-app-pub-2671069014341671~2362246826"
+        // The real banner unit. Debug builds use Google's test unit instead, because tapping your own
+        // live ads can get the AdMob account suspended.
+        buildConfigField("String", "AD_UNIT_ID", "\"ca-app-pub-2671069014341671/2863588518\"")
     }
 
     signingConfigs {
@@ -49,6 +55,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "AD_UNIT_ID", "\"ca-app-pub-3940256099942544/9214589741\"")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -91,4 +100,7 @@ dependencies {
     implementation(libs.compose.material3)
 
     implementation(libs.play.services.location)
+    implementation(libs.play.services.ads)
+    implementation(libs.ump)
+    implementation(libs.androidx.fragment)
 }

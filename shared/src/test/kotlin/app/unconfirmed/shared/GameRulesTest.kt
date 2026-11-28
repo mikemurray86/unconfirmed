@@ -371,7 +371,7 @@ class GameRulesTest {
 
     @Test
     fun theCreatureRoamsAroundThePlayerWithinReach() {
-        val setup = EncounterSetup.forDeduction(correct = true)
+        val setup = EncounterSetup.forSighting(guessedRight = true)
         val spots = (0 until 45 * 30).map { creatureSpot(setup, it / 30.0, TRACKING_WANDER_DEGREES) }
         assertTrue(spots.all { kotlin.math.abs(it.offsetDegrees) <= TRACKING_WANDER_DEGREES })
         assertTrue(
@@ -393,13 +393,13 @@ class GameRulesTest {
 
     @Test
     fun correctDeductionMakesConfirmedReachable() {
-        val setup = EncounterSetup.forDeduction(correct = true)
+        val setup = EncounterSetup.forSighting(guessedRight = true)
         assertTrue(bestPossibleScore(setup) >= 75, "best was ${bestPossibleScore(setup)}")
     }
 
     @Test
     fun withoutACompassThePathStillPassesThroughTheMiddle() {
-        val setup = EncounterSetup.forDeduction(correct = true)
+        val setup = EncounterSetup.forSighting(guessedRight = true)
         val best = (0 until (setup.durationSeconds * 30).toInt()).maxOf { frame ->
             val spot = creatureSpot(setup, frame / 30.0, ON_SCREEN_WANDER_DEGREES)
             shotScore(spot.offsetDegrees, spot.distanceMeters, spot.visibility)
@@ -409,7 +409,7 @@ class GameRulesTest {
 
     @Test
     fun aWatcherNeverMovesWhileItCanBeSeen() {
-        val setup = EncounterSetup.forDeduction(correct = true)
+        val setup = EncounterSetup.forSighting(guessedRight = true)
         val spots = (0 until (setup.durationSeconds * 30).toInt()).map {
             creatureSpot(setup, it / 30.0, TRACKING_WANDER_DEGREES, EncounterPath.WATCHES)
         }
@@ -427,7 +427,7 @@ class GameRulesTest {
 
     @Test
     fun aWatcherCanStillBeConfirmedWithoutACompass() {
-        val setup = EncounterSetup.forDeduction(correct = true)
+        val setup = EncounterSetup.forSighting(guessedRight = true)
         val best = (0 until (setup.durationSeconds * 30).toInt()).maxOf { frame ->
             val spot = creatureSpot(setup, frame / 30.0, ON_SCREEN_WANDER_DEGREES, EncounterPath.WATCHES)
             shotScore(spot.offsetDegrees, spot.distanceMeters, spot.visibility)
@@ -436,11 +436,37 @@ class GameRulesTest {
     }
 
     @Test
-    fun correctDeductionGivesAnEasierEncounter() {
-        val right = EncounterSetup.forDeduction(true)
-        val wrong = EncounterSetup.forDeduction(false)
-        assertTrue(right.shots > wrong.shots)
-        assertTrue(right.speed < wrong.speed)
+    fun eachClueFoundAddsAShotAndTime() {
+        val setups = (1..CLUES_PER_CASE).map { EncounterSetup.forSighting(guessedRight = true, cluesFound = it) }
+        assertEquals(listOf(1, 2, 3), setups.map { it.shots })
+        assertEquals(listOf(35.0, 40.0, 45.0), setups.map { it.durationSeconds })
+        assertEquals(EncounterSetup.forSighting(guessedRight = true), setups.last(), "every clue gives the full roll")
+    }
+
+    @Test
+    fun aSingleClueStillMakesConfirmedReachable() {
+        val setup = EncounterSetup.forSighting(guessedRight = true, cluesFound = 1)
+        assertTrue(bestPossibleScore(setup) >= 75, "best was ${bestPossibleScore(setup)}")
+        val watcher = (0 until (setup.durationSeconds * 30).toInt()).maxOf { frame ->
+            val spot = creatureSpot(setup, frame / 30.0, ON_SCREEN_WANDER_DEGREES, EncounterPath.WATCHES)
+            shotScore(spot.offsetDegrees, spot.distanceMeters, spot.visibility)
+        }
+        assertTrue(watcher >= 75, "best watcher shot was $watcher")
+    }
+
+    @Test
+    fun aRightGuessGivesAnEasierEncounter() {
+        val right = EncounterSetup.forSighting(guessedRight = true)
+        val unsure = EncounterSetup.forSighting(guessedRight = false)
+        assertEquals(right.shots, unsure.shots, "film comes from clues, not guesses")
+        assertTrue(right.speed < unsure.speed)
+        assertTrue(right.visibilityBias > unsure.visibilityBias)
+    }
+
+    @Test
+    fun withoutARightGuessASingleClueCanStillBeConfirmed() {
+        val setup = EncounterSetup.forSighting(guessedRight = false, cluesFound = 1)
+        assertTrue(bestPossibleScore(setup) >= 75, "best was ${bestPossibleScore(setup)}")
     }
 }
 

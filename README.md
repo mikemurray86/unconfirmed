@@ -50,6 +50,12 @@ Google Play takes a signed app bundle. Play App Signing holds the real signing k
 
 Both files are in `.gitignore`. Raise `versionCode` in `app/build.gradle.kts` before every upload. Release builds are shrunk with R8, so play a release build through a whole case before uploading it.
 
+## Ads
+
+The newspaper's front page has an AdMob banner slot (`ui/AdSlot.kt`). The AdMob app ID and the banner unit ID are in `app/build.gradle.kts`. Debug builds use Google's test banner unit, so you can tap their ads safely. Never tap the live ads in a release build, because AdMob can suspend the account for it.
+
+Each launch, Google's User Messaging Platform checks whether the player must be asked about ads, and shows the consent form if so (`Ads.kt`). Ads start only once consent allows them. Until a banner loads, or when none fills, the slot shows one of the paper's made-up classifieds. Where the law requires it, the About screen (under Options) has a "Privacy choices for ads" button. The consent form itself is set up in the AdMob console under Privacy & messaging.
+
 ## Where it works
 
 Anywhere. There's no map data to add. The game asks the phone's geocoder which US state you're in, and offers the cases reported there. The geocoder usually needs a data connection, so the answer is saved and reused when you're offline. Outside the US, or in a state with no cases yet, the list is empty.
@@ -68,10 +74,14 @@ Each clue comes with a picture drawn in code by `ClueArt.kt`: the sample in an e
 
 Photos from an encounter aren't saved as images. Each one keeps what the scene needs to draw that moment again: where the camera and the creature were, its stride, the time of day and weather, and the size of the screen. The journal redraws the viewfinder's square from that. The best photo goes on the creature's page, and every shot goes on the case's field report. Tap a shot to see it large. Entries filed before this change have no photos and keep the old stand-in picture.
 
+## Options and traveler mode
+
+Sound, Request a cryptid and About live on the Options page, reached from the field journal's Options button. Options also has **traveler mode**, in every build and off by default. With it on, the player picks a state to read the paper from and takes its cases as if they were there. Clues still turn up by walking wherever they really are. The choice is kept between launches, and turning traveler mode off brings them home.
+
 ## Debug builds
 
-- The **+25m** button in the investigation counts as walking 25 m, so a case can be played sitting down. A clue always turns up within 400 m.
-- "Debug: pretend to be somewhere else" on the case list cycles through the states that have cases, then back to the real one.
+- The **+25m** button in the investigation counts as walking 25 m, so a case can be played sitting down. A clue always turns up within 400 m. Turn it on under Options, at the back of the field journal.
+- The case list also prints every other state's papers, one pile per state. Scroll up or down to move between them.
 - Tap the field readout to cycle the weather, and long-press it to cycle the time of day.
 - To go straight to a creature's encounter, over and over, run `just encounter bigfoot`. It installs the debug build first. `just cryptids` lists the creature ids it takes. It's for checking the creature art and animation. After each round it shows the photos you took, printed as the journal prints them. To see an encounter in one case's own scenery, such as a regional story's copy in one state, pass a case id instead: `adb shell am start -n app.unconfirmed.game/.MainActivity --es debugEncounter tree-stand-al`.
 - `just clues` shows the picture for every clue type and trait on one page.

@@ -94,6 +94,11 @@ class SoundPlayer(private val context: Context) {
         if (enabled && wanted) soundscape.chime()
     }
 
+    /** A creature's own call, as it shows itself. [kind] is its call trait. */
+    fun call(kind: String) {
+        if (enabled && wanted) soundscape.call(kind)
+    }
+
     /** On screen, switched on, and the phone isn't on silent or vibrate. */
     private fun audible() = enabled && wanted && audio.ringerMode == AudioManager.RINGER_MODE_NORMAL
 

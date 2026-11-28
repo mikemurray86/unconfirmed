@@ -12,24 +12,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -52,6 +54,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -64,15 +68,17 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import app.unconfirmed.game.LocalSound
 import app.unconfirmed.game.WorldStatus
 import app.unconfirmed.shared.ActiveCase
 import app.unconfirmed.shared.CaseDefinition
@@ -103,84 +109,129 @@ fun CaseSelectionScreen(
     onChoose: (String) -> Unit,
     onResume: (String) -> Unit,
     onOpenJournal: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onOpenRequest: (() -> Unit)?,
-    onDebugNextState: (() -> Unit)? = null,
-    /** Debug builds only: whether the +25 m button is on, and how to flip it. Null hides the switch. */
-    debugWalkButton: Pair<Boolean, (Boolean) -> Unit>? = null,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .desk()
-            .systemBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Unconfirmed",
-                fontFamily = HandFont,
-                fontSize = 22.sp,
-                color = Paper.copy(alpha = 0.7f),
-                modifier = Modifier.weight(1f),
-            )
-            InkButton("Field journal", onOpenJournal)
-        }
+    val title: @Composable () -> Unit = {
+        Text(
+            "Unconfirmed",
+            fontFamily = HandFont,
+            fontSize = 22.sp,
+            color = Paper.copy(alpha = 0.7f),
+        )
+    }
+    val desk = Modifier
+        .fillMaxSize()
+        .desk()
+        .safeDrawingPadding()
+        .padding(horizontal = 16.dp, vertical = 12.dp)
 
-        if (paused.isNotEmpty()) PausedClippings(paused, status.state, onResume)
-
-        val editions = remember(status) { editionsOf(status) }
-        val hasPaused = paused.isNotEmpty()
-        if (editions.size == 1) {
-            PaperStack(editions.single(), status, hasPaused, onChoose, Modifier.weight(1f))
-        } else {
-            val home = editions.indexOfFirst { it.state == status.state }.coerceAtLeast(0)
-            val pager = rememberPagerState(initialPage = home) { editions.size }
-            // Open on the player's own state, and go back to it whenever the app comes back to the
-            // front or they pretend to be somewhere else, rather than wherever they last scrolled.
-            val lifecycle = LocalLifecycleOwner.current.lifecycle
-            LaunchedEffect(status.state, lifecycle) {
-                lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { pager.scrollToPage(home) }
+    val wide = sideBySide()
+    if (wide && LocalConfiguration.current.screenHeightDp < SHORT_SCREEN) {
+        // A short, wide window, such as a tablet's split screen: no height to spare, and not enough
+        // width for a strip of desk beside the paper. The clippings go up beside the journal, in
+        // place of the title.
+        Column(desk, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).padding(end = 12.dp)) {
+                    if (paused.isNotEmpty()) PausedClippings(paused, status.state, onResume) else title()
+                }
+                InkButton("Field journal", onOpenJournal)
             }
-            VerticalPager(
-                state = pager,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                pageSpacing = 16.dp,
-                // A state's page is nearly the whole screen, so half of one is a long way to drag.
-                flingBehavior = PagerDefaults.flingBehavior(pager, snapPositionalThreshold = 0.2f),
-                key = { editions[it].state ?: "" },
-            ) { page ->
-                val edition = editions[page]
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        "Debug: ${stateName(edition.state)} · ${page + 1} of ${editions.size}" +
-                            (if (edition.state == status.state) " · you are here" else "") +
-                            " · scroll for other states",
-                        fontFamily = HandFont,
-                        fontSize = 15.sp,
-                        color = Amber,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    PaperStack(edition, status, hasPaused, onChoose, Modifier.weight(1f))
+            Papers(status, paused.isNotEmpty(), onChoose, Modifier.weight(1f).fillMaxWidth())
+        }
+        return
+    }
+    if (wide) {
+        // A wide desk: the clippings and the journal sit to one side, and the paper gets the full
+        // height of the screen.
+        Row(desk, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.width(RAIL_WIDTH).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                title()
+                InkButton("Field journal", onOpenJournal)
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    if (paused.isNotEmpty()) PausedClippings(paused, status.state, onResume, stacked = true)
                 }
             }
+            Papers(status, paused.isNotEmpty(), onChoose, Modifier.weight(1f).fillMaxHeight())
         }
+        return
+    }
 
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            onDebugNextState?.let { DeskLink("Debug: elsewhere", onClick = it) }
-            debugWalkButton?.let { (shown, setShown) ->
-                DeskLink(if (shown) "+25m on" else "+25m off") { setShown(!shown) }
+    Column(desk, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { title() }
+            InkButton("Field journal", onOpenJournal)
+        }
+        if (paused.isNotEmpty()) PausedClippings(paused, status.state, onResume)
+        Papers(status, paused.isNotEmpty(), onChoose, Modifier.weight(1f).fillMaxWidth())
+    }
+}
+
+/** Below this height, in dp, a wide screen is a phone on its side and has no height to spare. */
+private const val SHORT_SCREEN = 480
+
+/** Room under the pile for the arrows that turn the papers. */
+private val PILE_CONTROLS_HEIGHT = 48.dp
+
+/** How wide the strip of desk beside the papers is, when the screen is wide enough for one. */
+private val RAIL_WIDTH = 240.dp
+
+/** The widest a paper is printed. Past this, a tablet shows it on the desk rather than edge to edge. */
+private val PAPER_MAX_WIDTH = 880.dp
+
+/** The player's own state's pile of papers, or in debug builds every state's piles, one above the next. */
+@Composable
+private fun Papers(
+    status: WorldStatus.ChoosingCase,
+    hasPaused: Boolean,
+    onChoose: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val editions = remember(status) { editionsOf(status) }
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        // A paper the size of a tablet keeps a newspaper's proportions and lies on the desk, with
+        // desk showing round it, rather than stretching down the whole screen with nothing on it.
+        val width = minOf(maxWidth, PAPER_MAX_WIDTH)
+        val height = if (width < 600.dp) {
+            maxHeight
+        } else {
+            val page = if (maxWidth > maxHeight) width * 0.68f else width * 0.95f
+            minOf(maxHeight, page + PILE_CONTROLS_HEIGHT)
+        }
+        val paper = Modifier.width(width).height(height)
+        if (editions.size == 1) {
+            PaperStack(editions.single(), status, hasPaused, onChoose, paper)
+            return@BoxWithConstraints
+        }
+        val home = editions.indexOfFirst { it.state == status.state }.coerceAtLeast(0)
+        val pager = rememberPagerState(initialPage = home) { editions.size }
+        // Open on the player's own state, and go back to it whenever the app comes back to the
+        // front or they pretend to be somewhere else, rather than wherever they last scrolled.
+        val lifecycle = LocalLifecycleOwner.current.lifecycle
+        LaunchedEffect(status.state, lifecycle) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { pager.scrollToPage(home) }
+        }
+        VerticalPager(
+            state = pager,
+            modifier = paper,
+            pageSpacing = 16.dp,
+            // A state's page is nearly the whole screen, so half of one is a long way to drag.
+            flingBehavior = PagerDefaults.flingBehavior(pager, snapPositionalThreshold = 0.2f),
+            key = { editions[it].state ?: "" },
+        ) { page ->
+            val edition = editions[page]
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Debug: ${stateName(edition.state)} · ${page + 1} of ${editions.size}" +
+                        (if (edition.state == status.state) " · you are here" else "") +
+                        " · scroll for other states",
+                    fontFamily = HandFont,
+                    fontSize = 15.sp,
+                    color = Amber,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                PaperStack(edition, status, hasPaused, onChoose, Modifier.weight(1f))
             }
-            LocalSound.current?.let { sound ->
-                DeskLink(if (sound.enabled) "Sound: on" else "Sound: off") { sound.turnOn(!sound.enabled) }
-            }
-            onOpenRequest?.let { DeskLink("Request a cryptid", onClick = it) }
-            DeskLink("About", onClick = onOpenAbout)
         }
     }
 }
@@ -405,38 +456,79 @@ private fun FrontPage(
     PaperSheet(fill = Newsprint, seed = seed, shadow = 3.dp, modifier = Modifier.fillMaxSize()) {
         if (!printed) return@PaperSheet
         val name = stateName(edition.state)
-        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Masthead(name, number)
-            Spacer(Modifier.height(10.dp))
-            if (case == null) {
-                SlowNewsDay(name, hasPaused, Modifier.weight(1f))
-            } else {
-                LeadStory(
-                    case = case,
-                    region = status.regionOf(case),
-                    headline = status.headlineOf(case),
-                    teaser = status.teaserOf(case),
-                    wireFrom = case.state.takeIf { it != edition.state && case in status.wire },
-                    enabled = onTop,
-                    onChoose = onChoose,
-                    modifier = Modifier.weight(1f),
-                )
+        BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            // A short, wide page, such as a tablet's split screen, has no height to spare for the ad
+            // under the story, so it's set as a broadsheet with the ad in a column of its own. Only
+            // when there's room for both columns: a portrait phone's paper can be wider than it's
+            // tall once paused cases take some of the height, but it's far too narrow for two.
+            val broadsheet = maxWidth > maxHeight &&
+                maxHeight < COMPACT_PAGE_HEIGHT &&
+                maxWidth >= MIN_STORY_WIDTH + MIN_AD_COLUMN_WIDTH + 24.dp
+            // The story keeps a readable width, and the ad's column narrows if it has to.
+            val adColumn = (maxWidth - MIN_STORY_WIDTH).coerceIn(MIN_AD_COLUMN_WIDTH, AD_COLUMN_WIDTH)
+            // The photo grows with the page, so a tablet's is in proportion to its paper.
+            val photoHeight = (maxHeight * 0.4f).coerceIn(220.dp, 360.dp)
+            // A short page, such as a phone on its side, sets the masthead and headline smaller.
+            val compact = maxHeight < COMPACT_PAGE_HEIGHT
+            val story: @Composable (Modifier) -> Unit = { modifier ->
+                if (case == null) {
+                    SlowNewsDay(name, hasPaused, modifier)
+                } else {
+                    LeadStory(
+                        case = case,
+                        region = status.regionOf(case),
+                        headline = status.headlineOf(case),
+                        teaser = status.teaserOf(case),
+                        wireFrom = case.state.takeIf { it != edition.state && case in status.wire },
+                        enabled = onTop,
+                        onChoose = onChoose,
+                        photoHeight = photoHeight,
+                        compact = compact,
+                        modifier = modifier,
+                    )
+                }
             }
-            Spacer(Modifier.height(10.dp))
-            ThickRule()
-            // Ruled off from the story above and set below it, so the ad can't be mistaken for
-            // the case or tapped by accident while picking it.
-            AdSlot(Modifier.padding(vertical = 8.dp), index = number - 1)
-            ThickRule()
+            // Ruled off from the story, so the ad can't be mistaken for the case or tapped by
+            // accident while picking it. Only the top paper shows a real ad: the one under it can't
+            // be seen, and AdMob doesn't allow ads that load where nobody can see them.
+            val ad: @Composable (Modifier) -> Unit = { modifier ->
+                AdSlot(modifier, index = number - 1, live = onTop)
+            }
+            Column(Modifier.fillMaxSize()) {
+                Masthead(name, number, compact)
+                Spacer(Modifier.height(10.dp))
+                if (broadsheet) {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        story(Modifier.weight(1f).fillMaxHeight())
+                        ColumnRule()
+                        Column(
+                            Modifier.width(adColumn).fillMaxHeight(),
+                            verticalArrangement = Arrangement.Center,
+                        ) { ad(Modifier) }
+                    }
+                } else {
+                    story(Modifier.weight(1f))
+                    Spacer(Modifier.height(10.dp))
+                    ThickRule()
+                    ad(Modifier.padding(vertical = 8.dp))
+                    ThickRule()
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun Masthead(stateName: String, number: Int) {
+private fun Masthead(stateName: String, number: Int, compact: Boolean = false) {
     val today = remember { SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.US).format(Date()) }
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        Text("The Night Ledger", fontFamily = MastheadFont, fontSize = 38.sp, lineHeight = 42.sp, maxLines = 1)
+        Text(
+            "The Night Ledger",
+            fontFamily = MastheadFont,
+            fontSize = if (compact) 28.sp else 38.sp,
+            lineHeight = if (compact) 30.sp else 42.sp,
+            maxLines = 1,
+        )
         ThickRule()
         Text(
             "${stateName.uppercase()} EDITION  ·  ${today.uppercase()}  ·  NO. $number",
@@ -467,16 +559,15 @@ private fun LeadStory(
     wireFrom: String?,
     enabled: Boolean,
     onChoose: (String) -> Unit,
+    /** The tallest the photo may be. */
+    photoHeight: Dp = 220.dp,
+    /** True on a short page, such as a phone on its side: the headline and teaser take less room. */
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val kicker = wireFrom?.let { "Over the wire from ${stateName(it)}" }
-    Column(
-        modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = listOfNotNull(kicker, headline, teaser).joinToString(". ") }
-            .clickable(enabled = enabled, role = Role.Button) { onChoose(case.id) },
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
+    // The teaser is left off when the story has too little height for it under the headline.
+    val heads: @Composable (Boolean) -> Unit = { withTeaser ->
         if (kicker != null) {
             Text(
                 "★ ${kicker.uppercase()} ★",
@@ -499,71 +590,189 @@ private fun LeadStory(
                 textAlign = TextAlign.Center,
                 color = Ink,
             ),
-            maxLines = 3,
-            autoSize = TextAutoSize.StepBased(minFontSize = 20.sp, maxFontSize = 30.sp, stepSize = 2.sp),
+            maxLines = if (compact) 2 else 3,
+            autoSize = TextAutoSize.StepBased(
+                minFontSize = if (compact) 14.sp else 20.sp,
+                maxFontSize = if (compact) 20.sp else 26.sp,
+                stepSize = 2.sp,
+            ),
             modifier = Modifier.fillMaxWidth(),
         )
-        Text(
-            teaser,
-            fontFamily = FontFamily.Serif,
-            fontStyle = FontStyle.Italic,
-            fontSize = 15.sp,
-            lineHeight = 19.sp,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        // Set in two columns, as a paper would: the photo on the left, the report running down
-        // beside it and cut off wherever the page runs out.
-        Row(
-            Modifier.weight(1f).fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Column(Modifier.weight(0.45f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (withTeaser) {
+            Text(
+                teaser,
+                fontFamily = FontFamily.Serif,
+                fontStyle = FontStyle.Italic,
+                fontSize = 15.sp,
+                lineHeight = 19.sp,
+                textAlign = TextAlign.Center,
+                maxLines = if (compact) 1 else 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+    val story = modifier
+        .fillMaxWidth()
+        .semantics { contentDescription = listOfNotNull(kicker, headline, teaser).joinToString(". ") }
+        .clickable(enabled = enabled, role = Role.Button) { onChoose(case.id) }
+
+    if (compact) {
+        // A short page has no height for the photo under the headline, so it stands down the left
+        // of the story instead.
+        BoxWithConstraints(story) {
+            // As tall as the story allows, and no more than about a third of its width.
+            val photoWidth = minOf(maxHeight * 0.8f, maxWidth * 0.35f)
+            val withTeaser = maxHeight >= 150.dp
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 NewsPhoto(
                     case.scene,
                     region,
                     case.id.hashCode(),
-                    Modifier.fillMaxWidth().heightIn(max = 220.dp).weight(1f, fill = false).aspectRatio(0.8f, true),
+                    Modifier.align(Alignment.CenterVertically).width(photoWidth).height(photoWidth / 0.8f),
                 )
+                // No room for the report itself: the teaser tells enough, and the note to investigate
+                // always shows.
+                Column(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+                ) {
+                    // The headline shrinks to fit what's left once the note to investigate has its room.
+                    Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        heads(withTeaser)
+                    }
+                    Investigate(Modifier.align(Alignment.End))
+                }
+            }
+        }
+        return
+    }
+
+    Column(story, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        heads(true)
+        WrappedReport(case, region, photoHeight, Modifier.weight(1f).fillMaxWidth().padding(top = 4.dp))
+    }
+}
+
+/** How a report is set: a serif body, with room between the lines like a paper's. */
+private val ReportStyle = TextStyle(fontFamily = FontFamily.Serif, fontSize = 14.sp, lineHeight = 19.sp, color = Ink)
+
+/** The caption under every news photo. */
+private const val CAPTION = "A reader’s photo. Blurry, as always."
+
+/** How the caption under a news photo is set. */
+private val CaptionStyle = TextStyle(
+    fontFamily = FontFamily.Serif,
+    fontStyle = FontStyle.Italic,
+    fontSize = 10.sp,
+    lineHeight = 12.sp,
+    color = Ink.copy(alpha = 0.7f),
+)
+
+/** The most room the caption takes under the photo: three lines, on the narrowest photo. */
+private val CAPTION_MAX_HEIGHT = 38.dp
+
+/** Room for the red-pencil note to investigate, at the foot of the report. */
+private val INVESTIGATE_HEIGHT = 30.dp
+
+/** The gap between the photo and the report beside it. */
+private val GUTTER = 12.dp
+
+/**
+ * The report set the way a paper sets it: the photo and its caption in the top left corner, the
+ * report running down beside them, and once it's past them, on across the whole column. Whatever
+ * doesn't fit is cut off with an ellipsis, and the note to investigate always shows under it.
+ */
+@Composable
+private fun WrappedReport(case: CaseDefinition, region: Region, photoMaxHeight: Dp, modifier: Modifier = Modifier) {
+    val report = remember(case.id, region) { datelined(case, region, case.lead) }
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier) {
+        // Two fifths of the column, and short enough to leave room for its caption and the note.
+        val roomForPhoto = (maxHeight - CAPTION_MAX_HEIGHT - INVESTIGATE_HEIGHT).coerceAtLeast(0.dp)
+        val photoHeight = minOf(photoMaxHeight, roomForPhoto, maxWidth * 0.42f / 0.8f)
+        val photoWidth = photoHeight * 0.8f
+        val besideWidth = (maxWidth - photoWidth - GUTTER).coerceAtLeast(0.dp)
+        val density = LocalDensity.current
+        val captionHeight = remember(photoWidth, density) {
+            with(density) {
+                val layout = measurer.measure(
+                    CAPTION,
+                    CaptionStyle,
+                    maxLines = 3,
+                    constraints = Constraints(maxWidth = photoWidth.roundToPx()),
+                )
+                layout.size.height.toDp()
+            }
+        }
+        // Where the report runs out of room beside the photo: the end of its last line that ends
+        // above the caption's foot. The rest carries on under them.
+        val bodyHeight = maxHeight
+        val wrap = remember(report, besideWidth, photoHeight, captionHeight, bodyHeight, density) {
+            with(density) {
+                val layout = measurer.measure(
+                    report,
+                    ReportStyle,
+                    constraints = Constraints(maxWidth = besideWidth.roundToPx()),
+                )
+                val foot = (photoHeight + 4.dp + captionHeight).toPx()
+                val last = (0 until layout.lineCount).lastOrNull { layout.getLineBottom(it) <= foot }
+                val split = last?.let { layout.getLineEnd(it) } ?: 0
+                // Whether a line of the rest fits under the photo before the note to investigate.
+                val besideBottom = last?.let { layout.getLineBottom(it) } ?: 0f
+                val under = bodyHeight.toPx() - maxOf(foot, besideBottom) - (INVESTIGATE_HEIGHT + 4.dp).toPx()
+                ReportWrap(lines = (last ?: -1) + 1, split = split, runsOn = under >= ReportStyle.lineHeight.toPx())
+            }
+        }
+        val split = wrap.split
+        Column(Modifier.fillMaxSize()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(GUTTER)) {
+                Column(Modifier.width(photoWidth), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    NewsPhoto(case.scene, region, case.id.hashCode(), Modifier.size(photoWidth, photoHeight))
+                    Text(CAPTION, style = CaptionStyle, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+                if (split < report.length && !wrap.runsOn) {
+                    // Nothing more fits under the photo, so the report ends beside it, cut off.
+                    Text(
+                        report,
+                        style = ReportStyle,
+                        maxLines = wrap.lines,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(besideWidth),
+                    )
+                } else {
+                    Column(Modifier.width(besideWidth)) {
+                        Text(report.subSequence(0, split), style = ReportStyle)
+                        // A report that fits beside the photo has the note right under its end.
+                        if (split >= report.length) Investigate(Modifier.align(Alignment.End).padding(top = 4.dp))
+                    }
+                }
+            }
+            if (split < report.length && wrap.runsOn) {
                 Text(
-                    "A reader’s photo, taken near the scene. Blurry, as always.",
-                    fontFamily = FontFamily.Serif,
-                    fontStyle = FontStyle.Italic,
-                    fontSize = 10.sp,
-                    lineHeight = 12.sp,
-                    maxLines = 2,
+                    report.subSequence(split, report.length),
+                    style = ReportStyle,
                     overflow = TextOverflow.Ellipsis,
-                    color = Ink.copy(alpha = 0.7f),
+                    modifier = Modifier.weight(1f, fill = false),
                 )
             }
-            Column(Modifier.weight(0.55f).fillMaxHeight()) {
-                Dateline(case, region, case.lead, Modifier.weight(1f, fill = false))
-                Investigate(Modifier.align(Alignment.End).padding(top = 4.dp))
-            }
+            if (split < report.length) Investigate(Modifier.align(Alignment.End).padding(top = 4.dp))
         }
     }
 }
 
-/** The opening of a report: where it's from in small capitals, then [body], cut off to fit. */
-@Composable
-private fun Dateline(case: CaseDefinition, region: Region, body: String, modifier: Modifier = Modifier) {
-    Text(
-        buildAnnotatedString {
-            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp))
-            append(
-                "${(case.place ?: case.scene.place(region)).uppercase()}, ${stateName(case.state).uppercase()} — ",
-            )
-            pop()
-            append(body)
-        },
-        fontFamily = FontFamily.Serif,
-        fontSize = 14.sp,
-        lineHeight = 19.sp,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
-    )
+/**
+ * Where a report breaks: the first [lines] fit beside the photo, ending at character [split], and
+ * [runsOn] says whether any of the rest fits under it.
+ */
+private data class ReportWrap(val lines: Int, val split: Int, val runsOn: Boolean)
+
+/** The opening of a report: where it's from in bold capitals, then [body]. */
+private fun datelined(case: CaseDefinition, region: Region, body: String) = buildAnnotatedString {
+    pushStyle(SpanStyle(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp))
+    append("${(case.place ?: case.scene.place(region)).uppercase()}, ${stateName(case.state).uppercase()} — ")
+    pop()
+    append(body)
 }
 
 /** A note in red pencil in the margin, so the story reads as something to tap. */
@@ -600,7 +809,13 @@ private fun SlowNewsDay(stateName: String, hasPaused: Boolean, modifier: Modifie
 
 /** The stories the player clipped out and kept, side by side above the pile. */
 @Composable
-private fun PausedClippings(paused: List<ActiveCase>, here: String?, onResume: (String) -> Unit) {
+private fun PausedClippings(
+    paused: List<ActiveCase>,
+    here: String?,
+    onResume: (String) -> Unit,
+    /** True to pin them one under another, down the side of a wide desk. */
+    stacked: Boolean = false,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             "Cases you're still working",
@@ -608,6 +823,14 @@ private fun PausedClippings(paused: List<ActiveCase>, here: String?, onResume: (
             fontSize = 15.sp,
             color = Paper.copy(alpha = 0.8f),
         )
+        if (stacked) {
+            paused.forEachIndexed { index, case ->
+                caseById(case.caseId)?.let { definition ->
+                    PausedClipping(case, definition, here, index, onResume, Modifier.fillMaxWidth().padding(top = 4.dp))
+                }
+            }
+            return@Column
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             paused.forEachIndexed { index, case ->
                 caseById(case.caseId)?.let { definition ->
@@ -682,6 +905,27 @@ private fun DeskLink(text: String, enabled: Boolean = true, onClick: () -> Unit)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 8.dp),
     )
+}
+
+/**
+ * Below this height, in dp, a front page hasn't room for the photo under the headline as well as
+ * the ad, so the photo goes beside the headline and the report itself is left out.
+ */
+private val COMPACT_PAGE_HEIGHT = 480.dp
+
+/** How wide the ad's column is on a broadsheet: a banner's 320 dp and a little to spare. */
+private val AD_COLUMN_WIDTH = 330.dp
+
+/** The narrowest the ad's column gets on a broadsheet, to leave the story room. */
+private val MIN_AD_COLUMN_WIDTH = 240.dp
+
+/** The room a broadsheet's story needs beside the ad, for its headline and a photo. */
+private val MIN_STORY_WIDTH = 340.dp
+
+/** A thin rule down the page between a broadsheet's columns. */
+@Composable
+private fun ColumnRule() {
+    VerticalDivider(thickness = 0.5.dp, color = Ink)
 }
 
 @Composable

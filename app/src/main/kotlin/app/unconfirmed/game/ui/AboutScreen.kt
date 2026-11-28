@@ -1,11 +1,12 @@
 package app.unconfirmed.game.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.unconfirmed.game.Ads
 import app.unconfirmed.game.BuildConfig
 
 private class FontCredit(val credit: String, val licenseAsset: String, val licenseName: String)
@@ -60,8 +62,9 @@ fun AboutScreen(onBack: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .systemBarsPadding()
+            .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
+            .readable()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -85,6 +88,13 @@ fun AboutScreen(onBack: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
         )
         TextButton(onClick = { links.openUri("https://api.met.no/") }) { Text("api.met.no") }
+
+        // Where the law gives players the right to change their ad choices later, they do it here.
+        val activity = LocalActivity.current
+        if (Ads.privacyOptionsRequired && activity != null) {
+            Heading("Ads")
+            TextButton(onClick = { Ads.showPrivacyOptions(activity) }) { Text("Privacy choices for ads") }
+        }
 
         Heading("Fonts")
         FONTS.forEach { font ->

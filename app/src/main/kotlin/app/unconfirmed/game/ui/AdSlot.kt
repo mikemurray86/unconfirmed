@@ -3,7 +3,7 @@ package app.unconfirmed.game.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -15,7 +15,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -24,28 +30,38 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.unconfirmed.game.Ads
+import app.unconfirmed.game.BuildConfig
+import com.google.android.gms.ads.AdListener
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.LoadAdError
 
 /**
  * The ad space on the newspaper's front page: the width of the page's column, up to 320 dp, and
- * 100 dp tall, the size of an AdMob large banner. On a narrow phone the column is less than
- * 320 dp across, so the box narrows with it.
+ * 64 dp tall, room for a standard banner. On a narrow phone the column is less than 320 dp
+ * across, so the box narrows with it and the banner is sized to fit.
  *
- * There are no real ads yet, so it shows [PlaceholderAd]: a made-up classified in the paper's own
- * style. To serve AdMob later, put an `AndroidView` wrapping an `AdView` where the placeholder is,
- * sized with `AdSize.getInlineAdaptiveBannerAdSize(width, AD_HEIGHT)` for the box's width, and
- * keep the placeholder as what shows while an ad loads or when none fills. The "Advertisement" label and the rules either side stay, so
- * the ad is never mistaken for a case and sits well clear of the stories' tap targets.
+ * While [live] and once [Ads] has started, it loads an AdMob inline adaptive banner. Until one
+ * loads, or when none fills, it shows [PlaceholderAd]: a made-up classified in the paper's own
+ * style. The "Advertisement" label and the rules either side stay, so the ad is never mistaken for
+ * a case and sits well clear of the stories' tap targets.
  */
 @Composable
-fun AdSlot(modifier: Modifier = Modifier, index: Int = 0) {
+fun AdSlot(modifier: Modifier = Modifier, index: Int = 0, live: Boolean = true) {
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             "ADVERTISEMENT",
@@ -56,15 +72,56 @@ fun AdSlot(modifier: Modifier = Modifier, index: Int = 0) {
             color = Ink.copy(alpha = 0.6f),
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        Box(Modifier.widthIn(max = AD_MAX_WIDTH.dp).fillMaxWidth().height(AD_HEIGHT.dp)) {
-            PlaceholderAd(index)
+        BoxWithConstraints(
+            Modifier.widthIn(max = AD_MAX_WIDTH.dp).fillMaxWidth().height(AD_HEIGHT.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            var loaded by remember { mutableStateOf(false) }
+            if (!loaded) PlaceholderAd(index)
+            if (live && Ads.ready) {
+                val width = maxWidth.value.toInt()
+                key(width) { BannerAd(width, onLoaded = { loaded = it }) }
+            }
         }
     }
 }
 
-/** The size of an AdMob large banner, in dp. */
+/** An AdMob banner [width] dp across and at most [AD_HEIGHT] tall. [onLoaded] says whether one filled. */
+@Composable
+private fun BannerAd(width: Int, onLoaded: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    val report by rememberUpdatedState(onLoaded)
+    val adView = remember {
+        AdView(context).apply {
+            adUnitId = BuildConfig.AD_UNIT_ID
+            setAdSize(AdSize.getInlineAdaptiveBannerAdSize(width, AD_HEIGHT))
+            adListener = object : AdListener() {
+                override fun onAdLoaded() = report(true)
+
+                override fun onAdFailedToLoad(error: LoadAdError) = report(false)
+            }
+            loadAd(AdRequest.Builder().build())
+        }
+    }
+    LifecycleResumeEffect(adView) {
+        adView.resume()
+        onPauseOrDispose { adView.pause() }
+    }
+    DisposableEffect(adView) {
+        onDispose {
+            adView.destroy()
+            report(false)
+        }
+    }
+    AndroidView(factory = { adView })
+}
+
+/**
+ * The ad space, in dp: a standard banner's width, and a little taller than its 50 dp so an inline
+ * adaptive banner has some room. A 100 dp large banner took too much of the page from the story.
+ */
 private const val AD_MAX_WIDTH = 320
-private const val AD_HEIGHT = 100
+private const val AD_HEIGHT = 64
 
 /** A made-up ad for the paper's readers, with a little ink drawing of what's on offer. */
 private class Classified(val headline: String, val body: String, val footer: String, val picture: DrawScope.() -> Unit)
@@ -112,18 +169,18 @@ private fun PlaceholderAd(index: Int) {
             .border(2.dp, Ink)
             .padding(2.dp)
             .border(0.5.dp, Ink)
-            .padding(horizontal = 8.dp, vertical = 5.dp)
+            .padding(horizontal = 6.dp, vertical = 3.dp)
             .semantics { contentDescription = "Advertisement: ${ad.headline}. ${ad.body}" },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(Modifier.width(64.dp).fillMaxHeight()) { ad.picture(this) }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Canvas(Modifier.width(40.dp).fillMaxHeight().padding(vertical = 2.dp)) { ad.picture(this) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
             Text(
                 ad.headline,
                 fontFamily = HeadlineFont,
-                fontSize = 16.sp,
-                lineHeight = 17.sp,
+                fontSize = 13.sp,
+                lineHeight = 14.sp,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -131,9 +188,10 @@ private fun PlaceholderAd(index: Int) {
             Text(
                 ad.body,
                 fontFamily = FontFamily.Serif,
-                fontSize = 9.5.sp,
-                lineHeight = 11.sp,
-                maxLines = 3,
+                fontSize = 8.5.sp,
+                lineHeight = 10.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -142,7 +200,8 @@ private fun PlaceholderAd(index: Int) {
                 fontFamily = FontFamily.Serif,
                 fontStyle = FontStyle.Italic,
                 fontWeight = FontWeight.Bold,
-                fontSize = 8.5.sp,
+                fontSize = 7.5.sp,
+                lineHeight = 9.sp,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -220,6 +279,6 @@ private fun DrawScope.drawQuestion() {
         cubicTo(w * 0.30f, h * 0.05f, w * 0.75f, h * 0.05f, w * 0.72f, h * 0.32f)
         cubicTo(w * 0.70f, h * 0.48f, w * 0.50f, h * 0.48f, w * 0.50f, h * 0.68f)
     }
-    drawPath(mark, Ink, style = Stroke(6.dp.toPx(), cap = StrokeCap.Round))
-    drawCircle(Ink, 4.dp.toPx(), Offset(w * 0.50f, h * 0.86f))
+    drawPath(mark, Ink, style = Stroke(w * 0.1f, cap = StrokeCap.Round))
+    drawCircle(Ink, w * 0.07f, Offset(w * 0.50f, h * 0.86f))
 }

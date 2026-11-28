@@ -1,5 +1,7 @@
 package app.unconfirmed.game.ui
 
+import android.content.pm.ActivityInfo
+import androidx.activity.compose.LocalActivity
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -7,10 +9,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -69,27 +69,23 @@ private const val MAX_STRIDES_PER_SECOND = 1.6
 @Composable
 fun EncounterScreen(
     creatureId: String,
-    correctDeduction: Boolean,
+    guessedRight: Boolean,
+    cluesFound: Int,
     scene: Scene,
     region: Region,
     point: GeoPoint?,
     onFinished: (List<Photo>) -> Unit,
 ) {
-    val setup = remember(correctDeduction) { EncounterSetup.forDeduction(correctDeduction) }
+    val setup = remember(guessedRight, cluesFound) { EncounterSetup.forSighting(guessedRight, cluesFound) }
     var started by remember { mutableStateOf(false) }
 
     if (!started) {
         val shots = if (setup.shots == 1) "one shot" else "${setup.shots} shots"
         MessageScreen(
             title = "It's close",
-            body = (
-                if (correctDeduction) {
-                    "You know what you're looking for, and you know how it moves. "
-                } else {
-                    "Something's here, but it isn't behaving the way you expected. "
-                }
-                ) + "You have $shots. Hold your phone up and turn to follow it. Wait until it's " +
-                "clear and in the middle of the frame.",
+            // Says nothing of whether the player's guesses were right: they're never told.
+            body = "You saw it, and it hasn't gone far. You have $shots. Hold your phone up and turn " +
+                "to follow it. Wait until it's clear and in the middle of the frame.",
             action = "Raise the camera" to { started = true },
         )
         return
@@ -116,6 +112,15 @@ private fun EncounterScene(
     val density = LocalDensity.current
     var finished by remember { mutableStateOf(false) }
     val profile = creatureProfile(creatureId)
+
+    // The player turns on the spot with the phone held up, which could tip the screen round
+    // mid-shot. It stays whichever way up it was until the encounter's over.
+    val activity = LocalActivity.current
+    DisposableEffect(activity) {
+        val before = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        onDispose { if (before != null) activity.requestedOrientation = before }
+    }
 
     val sky = rememberSky(point)
     val heading = rememberHeading(fallbackDegrees = null)
@@ -192,7 +197,7 @@ private fun EncounterScene(
 
         val remaining = (setup.durationSeconds - seconds).toInt().coerceAtLeast(0)
         Column(
-            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(16.dp),
+            Modifier.align(Alignment.TopCenter).safeTopPadding().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text("Film left: $shotsLeft   ·   ${remaining}s", color = Color.White)
@@ -233,7 +238,7 @@ private fun EncounterScene(
             colors = ButtonDefaults.buttonColors(containerColor = Color.White),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
+                .safeBottomPadding()
                 .padding(bottom = 28.dp)
                 .size(76.dp),
         ) {}
@@ -247,14 +252,18 @@ private fun describeShot(score: Int) = when {
     else -> "Nothing on film."
 }
 
-/** How much of the screen's width the viewfinder takes up. It sits dead in the middle of the screen. */
-const val VIEWFINDER_WIDTH = 0.6f
+/**
+ * How many degrees of the panorama the viewfinder spans: 60% of a portrait screen's width. It sits
+ * dead in the middle of the screen. It's measured in degrees rather than in screen widths, so a
+ * shot is just as hard to frame whichever way up the phone is.
+ */
+const val VIEWFINDER_DEGREES = 42f
 
 /** The frame in the middle of the screen. A shot scores for how close the creature is to its centre. */
 @Composable
 private fun Viewfinder(modifier: Modifier) {
     Canvas(modifier) {
-        val side = size.width * VIEWFINDER_WIDTH
+        val side = VIEWFINDER_DEGREES * scenePxPerDegree(size.width, size.height)
         val topLeft = Offset(center.x - side / 2, size.height * 0.5f - side / 2)
         drawRect(
             color = Color.White.copy(alpha = 0.7f),
@@ -334,6 +343,7 @@ fun sceneCreature(
     visibility: Double,
     movingRight: Boolean,
     stride: Double,
+    glow: Float = 0f,
 ): SceneCreature {
     val profile = creatureProfile(creatureId)
     return SceneCreature(
@@ -347,6 +357,7 @@ fun sceneCreature(
         stride = stride.toFloat(),
         fill = profile.fill,
         footprint = profile.footprint,
+        glow = glow,
     )
 }
 

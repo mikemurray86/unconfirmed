@@ -128,7 +128,7 @@ enum class JournalRank(val label: String) {
     CONFIRMED("Confirmed"),
 }
 
-/** A wrong deduction caps the entry at Sighted, however good the photo is. */
+/** Naming the wrong creature caps the entry at Sighted, however good the photo is. */
 fun journalRank(correctDeduction: Boolean, photoScore: Int): JournalRank = when {
     !correctDeduction -> JournalRank.SIGHTED
     photoScore >= 75 -> JournalRank.CONFIRMED
@@ -136,8 +136,13 @@ fun journalRank(correctDeduction: Boolean, photoScore: Int): JournalRank = when 
     else -> JournalRank.SIGHTED
 }
 
+/**
+ * A case runs from the lead, through the search, to the encounter once the player taps a sighting,
+ * then naming what they saw, and done. Saves from before naming came after the photo go straight
+ * from the encounter to done, as their creature was named first.
+ */
 @Serializable
-enum class CasePhase { LEAD, INVESTIGATING, ENCOUNTER, DONE }
+enum class CasePhase { LEAD, INVESTIGATING, ENCOUNTER, NAMING, DONE }
 
 /**
  * A player's progress through a case. Saved after every change, so a closed app loses nothing.
@@ -153,6 +158,7 @@ data class ActiveCase(
     val bearings: List<Double>,
     val cluesFound: Int = 0,
     val phase: CasePhase = CasePhase.LEAD,
+    /** The creature the player named, after the photo. */
     val deductionId: String? = null,
     val photoScore: Int? = null,
     val walkedMeters: Double = 0.0,
@@ -171,6 +177,20 @@ data class ActiveCase(
      * from before regions, which use the case's own.
      */
     val region: Region? = null,
+    /**
+     * The creatures the player guessed while searching, one for each clue at most, oldest first.
+     * They're never told whether a guess was right. Right ones draw the creature out, and wrong
+     * ones put it off: see [heatOf].
+     */
+    val guesses: List<String> = emptyList(),
+    /** How many sightings the player let pass without tapping. */
+    val missedSightings: Int = 0,
+    /** How far the player has gone since the last chance of a sighting. */
+    val sightingMeters: Double = 0.0,
+    /** The bait the player has picked up on this case and is carrying, oldest first. */
+    val bait: List<Lure> = emptyList(),
+    /** The bait the player has set out on this case, oldest first. See [heatOf]. */
+    val luresUsed: List<Lure> = emptyList(),
 ) {
     /** The headline the player took the case under, kept for the whole case and its journal entry. */
     fun title(definition: CaseDefinition): String = definition.headline(headline)

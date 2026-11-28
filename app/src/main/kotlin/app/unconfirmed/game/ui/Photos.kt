@@ -62,7 +62,8 @@ fun PhotoImage(photo: Photo, creatureId: String, scene: Scene, region: Region, m
     ) {
         // The viewfinder sits dead in the middle of the screen, so the scene is centred and
         // scaled until the viewfinder's square fills this one.
-        val scale = with(density) { side / (frameWidth.dp.toPx() * VIEWFINDER_WIDTH) }
+        val viewfinder = VIEWFINDER_DEGREES * scenePxPerDegree(frameWidth, frameHeight)
+        val scale = with(density) { side / viewfinder.dp.toPx() }
         Box(
             Modifier
                 .requiredSize(frameWidth.dp, frameHeight.dp)

@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.view.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -12,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -37,6 +39,7 @@ fun rememberHeading(fallbackDegrees: Double?): Double? {
     val sensors = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
     val rotation = remember { sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) }
     var heading by remember { mutableStateOf<Double?>(null) }
+    val display = remember { ContextCompat.getDisplayOrDefault(context) }
 
     DisposableEffect(lifecycle, rotation) {
         if (rotation == null) return@DisposableEffect onDispose {}
@@ -51,8 +54,11 @@ fun rememberHeading(fallbackDegrees: Double?): Double? {
                 var x = -matrix[2]
                 var y = -matrix[5]
                 if (hypot(x, y) < MIN_LEVEL) {
-                    x = matrix[1]
-                    y = matrix[4]
+                    // Flat, it's the top of the screen that points the way, and with the phone on
+                    // its side that's one of the phone's long edges rather than its top.
+                    val (right, up) = screenUp(display.rotation)
+                    x = right * matrix[0] + up * matrix[1]
+                    y = right * matrix[3] + up * matrix[4]
                 }
                 val length = hypot(x, y).takeIf { it > 0f } ?: return
                 east += (x / length - east) * SMOOTHING
@@ -77,6 +83,17 @@ fun rememberHeading(fallbackDegrees: Double?): Double? {
         }
     }
     return if (rotation == null) fallbackDegrees else heading
+}
+
+/**
+ * Which way the top of the screen points, in the phone's own axes, as how much of its right edge
+ * and how much of its top edge, for the display's [rotation].
+ */
+private fun screenUp(rotation: Int): Pair<Float, Float> = when (rotation) {
+    Surface.ROTATION_90 -> 1f to 0f
+    Surface.ROTATION_180 -> 0f to -1f
+    Surface.ROTATION_270 -> -1f to 0f
+    else -> 0f to 1f
 }
 
 /** The signed turn from [from] to [to], in degrees from -180 to 180. */

@@ -8,29 +8,39 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.unconfirmed.shared.ALL_CASES
 import app.unconfirmed.shared.ActiveCase
+import app.unconfirmed.shared.BAIT_LEFT_BEHIND_METERS
 import app.unconfirmed.shared.CLUES_PER_CASE
 import app.unconfirmed.shared.CaseDefinition
 import app.unconfirmed.shared.CasePhase
 import app.unconfirmed.shared.Cell
 import app.unconfirmed.shared.JournalEntry
 import app.unconfirmed.shared.LocationFix
+import app.unconfirmed.shared.Lure
 import app.unconfirmed.shared.MovementTracker
 import app.unconfirmed.shared.Photo
 import app.unconfirmed.shared.Region
 import app.unconfirmed.shared.STATE_NAMES
+import app.unconfirmed.shared.baitTurnsUp
+import app.unconfirmed.shared.canBeSighted
+import app.unconfirmed.shared.canCarryMoreBait
 import app.unconfirmed.shared.canPause
 import app.unconfirmed.shared.caseById
 import app.unconfirmed.shared.caseSeed
 import app.unconfirmed.shared.casesIn
 import app.unconfirmed.shared.dayWindow
 import app.unconfirmed.shared.editionSeed
+import app.unconfirmed.shared.guessesLeft
+import app.unconfirmed.shared.heatOf
 import app.unconfirmed.shared.journalEntryFor
+import app.unconfirmed.shared.lureAt
 import app.unconfirmed.shared.pickClueTypes
 import app.unconfirmed.shared.pickHeadline
 import app.unconfirmed.shared.pickTeaser
 import app.unconfirmed.shared.regionAt
 import app.unconfirmed.shared.runToday
 import app.unconfirmed.shared.searchFindsClue
+import app.unconfirmed.shared.sightingAppears
+import app.unconfirmed.shared.stateName
 import app.unconfirmed.shared.suggestedBearings
 import app.unconfirmed.shared.weekWindow
 import app.unconfirmed.shared.wireCases
@@ -76,6 +86,9 @@ sealed interface WorldStatus {
     data object NeedsConnection : WorldStatus
 }
 
+/** The states a traveler can visit: every one with cases of its own, in order of name. */
+val TRAVEL_STATES: List<String> = STATE_NAMES.keys.filter { casesIn(it).isNotEmpty() }.sortedBy(::stateName)
+
 data class GameState(
     val safetyAccepted: Boolean,
     val status: WorldStatus = WorldStatus.WaitingForLocation,
@@ -84,16 +97,38 @@ data class GameState(
     val activeCase: ActiveCase? = null,
     /** The number (from 1) of a clue that just turned up, so the screen can announce it. */
     val foundClueNumber: Int? = null,
+    /**
+     * True while the creature is showing itself in the search. Tapping it starts the encounter.
+     * It's never saved: a sighting that's closed away is simply missed.
+     */
+    val sighting: Boolean = false,
+    /**
+     * Bait lying on the ground just ahead, waiting to be picked up, or null. It's never saved, and
+     * it's left behind once the player has walked on past it.
+     */
+    val groundBait: Lure? = null,
     /** Every case the player has closed, oldest first. */
     val journal: List<JournalEntry> = emptyList(),
     /** The US state the player is standing in, once known. */
     val areaState: String? = null,
     /** Investigations set aside to pick up later, oldest first. */
     val pausedCases: List<ActiveCase> = emptyList(),
-    /** Debug builds only: the state the player is pretending to be in. */
-    val debugState: String? = null,
+    /**
+     * Whether traveler mode is on: the player can read another state's paper, and take its cases,
+     * as if they were there. Off unless the player turns it on in Options.
+     */
+    val travelerMode: Boolean = false,
+    /** The US state the player is really in, once known, whatever paper they're reading. */
+    val homeState: String? = null,
+    /** In traveler mode, the state whose paper the player is reading, or null for their own. */
+    val visitingState: String? = null,
     /** Debug builds only: whether the investigation shows a button that counts as walking 25 m. */
     val debugWalkButton: Boolean = false,
+    /**
+     * Whether the player is scouting: moving through the scene with the on-screen stick instead
+     * of on foot. GPS walking doesn't count while it's on. Either way is always open to them.
+     */
+    val scouting: Boolean = false,
 )
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
@@ -113,20 +148,31 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private var lookingUp = false
     private var lastLookupMillis = 0L
 
+    // How far the player has gone since bait turned up on the ground ahead.
+    private var baitPassedMeters = 0.0
+
     private val _state = MutableStateFlow(
-        GameState(
-            safetyAccepted = prefs.getBoolean(KEY_SAFETY, false),
-            debugWalkButton = BuildConfig.DEBUG && prefs.getBoolean(KEY_DEBUG_WALK_BUTTON, false),
-            activeCase = loadCase(),
-            journal = loadJournal(),
-            pausedCases = loadPaused(),
-            areaState = knownState,
-        ).let { if (it.activeCase != null) it.copy(status = WorldStatus.Ready) else it },
+        run {
+            val traveler = prefs.getBoolean(KEY_TRAVELER, false)
+            val visiting = prefs.getString(KEY_VISITING, null)?.takeIf { traveler && it in TRAVEL_STATES }
+            GameState(
+                safetyAccepted = prefs.getBoolean(KEY_SAFETY, false),
+                debugWalkButton = BuildConfig.DEBUG && prefs.getBoolean(KEY_DEBUG_WALK_BUTTON, false),
+                scouting = prefs.getBoolean(KEY_SCOUTING, false),
+                travelerMode = traveler,
+                homeState = knownState,
+                visitingState = visiting,
+                activeCase = loadCase(),
+                journal = loadJournal(),
+                pausedCases = loadPaused(),
+                areaState = visiting ?: knownState,
+            )
+        }.let { if (it.activeCase != null) it.copy(status = WorldStatus.Ready) else it },
     )
     val state: StateFlow<GameState> = _state.asStateFlow()
 
-    private val hasKnownState: Boolean get() = stateCell != null || _state.value.debugState != null
-    private val currentState: String? get() = _state.value.debugState ?: knownState
+    private val hasKnownState: Boolean get() = stateCell != null || _state.value.visitingState != null
+    private val currentState: String? get() = _state.value.visitingState ?: knownState
 
     fun acceptSafety() {
         prefs.edit { putBoolean(KEY_SAFETY, true) }
@@ -134,8 +180,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onLocation(fix: LocationFix) {
-        val walked = tracker.update(fix)
-        _state.update { it.copy(fix = fix, tooFast = tracker.isTooFast) }
+        // While scouting the fix still places the player, for the sky and their state, but walking
+        // on foot isn't counted.
+        val scouting = _state.value.scouting
+        val walked = if (scouting) 0.0 else tracker.update(fix)
+        _state.update { it.copy(fix = fix, tooFast = !scouting && tracker.isTooFast) }
         updateState(fix)
         val case = _state.value.activeCase
         when {
@@ -164,7 +213,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     putString(KEY_STATE_CELL, json.encodeToString(Cell.serializer(), cell))
                 }
             }
-            _state.update { it.copy(areaState = currentState) }
+            _state.update { it.copy(homeState = knownState, areaState = currentState) }
             if (_state.value.activeCase == null) offerCases()
         }
     }
@@ -172,16 +221,102 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Walking can turn up the next clue at any moment, in any direction. The suggested heading is
      * only a hint, so nobody is ever sent towards a particular place. Never at driving speed.
+     * Once there's a clue, the creature may show itself too, sooner the hotter the case: see
+     * [heatOf]. A step that turns up a clue never brings a sighting as well.
      */
     private fun search(case: ActiveCase, walked: Double): ActiveCase {
         val definition = caseById(case.caseId) ?: return case
-        if (tracker.isTooFast || case.allCluesFound(definition)) return case
-        if (!searchFindsClue(case.searchedMeters, walked, Random.nextDouble())) {
-            return case.copy(searchedMeters = case.searchedMeters + walked)
+        val tooFast = !_state.value.scouting && tracker.isTooFast
+        if (tooFast) return case
+        lookForBait(case, walked)
+        if (!case.allCluesFound(definition)) {
+            if (searchFindsClue(case.searchedMeters, walked, Random.nextDouble())) {
+                val found = case.cluesFound + 1
+                _state.update { it.copy(foundClueNumber = found) }
+                return case.copy(cluesFound = found, searchedMeters = 0.0)
+            }
         }
-        val found = case.cluesFound + 1
-        _state.update { it.copy(foundClueNumber = found) }
-        return case.copy(cluesFound = found, searchedMeters = 0.0)
+        val searched = case.copy(searchedMeters = case.searchedMeters + walked)
+        if (!canBeSighted(searched) || _state.value.sighting) return searched
+        if (sightingAppears(heatOf(searched, definition), searched.sightingMeters, walked, Random.nextDouble())) {
+            _state.update { it.copy(sighting = true) }
+            return searched.copy(sightingMeters = 0.0)
+        }
+        return searched.copy(sightingMeters = searched.sightingMeters + walked)
+    }
+
+    /**
+     * Notes a guess at the creature while searching, one for each clue found. The player isn't told
+     * whether it's right: it only changes how soon the creature shows itself.
+     */
+    fun guess(suspectId: String) {
+        val case = _state.value.activeCase ?: return
+        if (case.phase != CasePhase.INVESTIGATING || guessesLeft(case) == 0) return
+        saveCase(case.copy(guesses = case.guesses + suspectId))
+    }
+
+    /**
+     * Now and then the player comes across bait. It waits on the ground until they pick it up or
+     * walk on past it, and none turns up while their hands are full.
+     */
+    private fun lookForBait(case: ActiveCase, walked: Double) {
+        if (_state.value.groundBait != null) {
+            baitPassedMeters += walked
+            if (baitPassedMeters >= BAIT_LEFT_BEHIND_METERS) _state.update { it.copy(groundBait = null) }
+        } else if (canCarryMoreBait(case) && baitTurnsUp(walked, Random.nextDouble())) {
+            baitPassedMeters = 0.0
+            _state.update { it.copy(groundBait = lureAt(Random.nextDouble())) }
+        }
+    }
+
+    /** Picks up the bait lying ahead, if there's room to carry it. */
+    fun pickUpBait() {
+        val lure = _state.value.groundBait ?: return
+        val case = _state.value.activeCase ?: return
+        if (case.phase != CasePhase.INVESTIGATING || !canCarryMoreBait(case)) return
+        _state.update { it.copy(groundBait = null) }
+        saveCase(case.copy(bait = case.bait + lure))
+    }
+
+    /**
+     * Sets out one [lure] the player is carrying. Whether it suits the creature only shows in how
+     * soon it turns up: see [heatOf].
+     */
+    fun useBait(lure: Lure) {
+        val case = _state.value.activeCase ?: return
+        if (case.phase != CasePhase.INVESTIGATING || lure !in case.bait) return
+        saveCase(case.copy(bait = case.bait - lure, luresUsed = case.luresUsed + lure))
+    }
+
+    /** Debug builds only: puts a random lure on the ground ahead. */
+    fun debugBait() {
+        if (!BuildConfig.DEBUG) return
+        val case = _state.value.activeCase ?: return
+        if (case.phase != CasePhase.INVESTIGATING) return
+        baitPassedMeters = 0.0
+        _state.update { it.copy(groundBait = lureAt(Random.nextDouble())) }
+    }
+
+    /** The player tapped the creature while it showed itself: on to the encounter. */
+    fun engageSighting() {
+        val case = _state.value.activeCase ?: return
+        if (!_state.value.sighting || case.phase != CasePhase.INVESTIGATING) return
+        _state.update { it.copy(sighting = false) }
+        saveCase(case.copy(phase = CasePhase.ENCOUNTER, sightingMeters = 0.0))
+    }
+
+    /** The creature slipped away before the player tapped it. It stays close, so it's back soon. */
+    fun missSighting() {
+        if (!_state.value.sighting) return
+        _state.update { it.copy(sighting = false) }
+        changeCase { it.copy(missedSightings = it.missedSightings + 1, sightingMeters = 0.0) }
+    }
+
+    /** Debug builds only: brings the creature out now, if there's a clue to go on. */
+    fun debugSighting() {
+        if (!BuildConfig.DEBUG) return
+        val case = _state.value.activeCase ?: return
+        if (canBeSighted(case)) _state.update { it.copy(sighting = true) }
     }
 
     fun findShown() {
@@ -193,7 +328,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         if (current.activeCase != null) return
         val status = when {
-            current.fix == null && current.debugState == null -> WorldStatus.WaitingForLocation
+            current.fix == null && current.visitingState == null -> WorldStatus.WaitingForLocation
             !hasKnownState && lookingUp -> WorldStatus.LocatingState
             !hasKnownState && lastLookupMillis == 0L -> WorldStatus.LocatingState
             !hasKnownState -> WorldStatus.NeedsConnection
@@ -246,12 +381,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * The scenery where the player is standing, from their state and position. While pretending to
-     * be somewhere else in a debug build, the real position doesn't apply, so it's the state's usual.
+     * The scenery where the player is standing, from their state and position. While visiting
+     * another state in traveler mode, the real position doesn't apply, so it's the state's usual.
      */
     private fun currentRegion(): Region {
         val current = _state.value
-        val point = if (current.debugState == null) current.fix?.point ?: stateCell?.center else null
+        val point = if (current.visitingState == null) current.fix?.point ?: stateCell?.center else null
         return regionAt(currentState, point)
     }
 
@@ -284,7 +419,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             putString(KEY_PAUSED, json.encodeToString(ListSerializer(ActiveCase.serializer()), paused))
             remove(KEY_CASE)
         }
-        _state.update { it.copy(activeCase = null, pausedCases = paused) }
+        _state.update { it.copy(activeCase = null, pausedCases = paused, sighting = false, groundBait = null) }
         offerCases()
     }
 
@@ -305,20 +440,27 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         it.copy(phase = CasePhase.INVESTIGATING, startedAtMillis = System.currentTimeMillis())
     }
 
-    fun deduce(suspectId: String) = changeCase {
-        it.copy(deductionId = suspectId, phase = CasePhase.ENCOUNTER)
-    }
-
-    /** Files the encounter's [photos]. The best of them is what the journal rank goes by. */
+    /**
+     * Keeps the encounter's [photos], then asks the player what they saw. The best photo is what
+     * the journal rank goes by. A save from before naming came after the photo already has its
+     * creature named, so it's filed straight away.
+     */
     fun finishEncounter(photos: List<Photo>) {
         val case = _state.value.activeCase ?: return
         if (case.phase != CasePhase.ENCOUNTER) return
-        val done = case.copy(
-            photoScore = photos.maxOfOrNull { it.score } ?: 0,
-            photos = photos,
-            phase = CasePhase.DONE,
-            finishedAtMillis = System.currentTimeMillis(),
-        )
+        val shot = case.copy(photoScore = photos.maxOfOrNull { it.score } ?: 0, photos = photos)
+        if (shot.deductionId != null) file(shot) else saveCase(shot.copy(phase = CasePhase.NAMING))
+    }
+
+    /** Names the creature the player photographed, and files the case in the journal. */
+    fun nameCreature(suspectId: String) {
+        val case = _state.value.activeCase ?: return
+        if (case.phase != CasePhase.NAMING) return
+        file(case.copy(deductionId = suspectId))
+    }
+
+    private fun file(case: ActiveCase) {
+        val done = case.copy(phase = CasePhase.DONE, finishedAtMillis = System.currentTimeMillis())
         val definition = caseById(done.caseId) ?: return
         journalEntryFor(done, definition, UUID.randomUUID().toString())?.let(::addToJournal)
         saveCase(done)
@@ -336,6 +478,28 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         offerCases()
     }
 
+    /**
+     * Switches between walking on foot and scouting with the stick, and remembers the choice. Back
+     * on foot, the tracker starts afresh, so the way covered while scouting isn't counted again.
+     */
+    fun setScouting(on: Boolean) {
+        if (on == _state.value.scouting) return
+        prefs.edit { putBoolean(KEY_SCOUTING, on) }
+        if (!on) tracker.reset()
+        _state.update { it.copy(scouting = on, tooFast = false) }
+    }
+
+    /**
+     * Counts [meters] covered with the stick while scouting. It searches just as walking does, so
+     * clues turn up at the same rate either way.
+     */
+    fun scout(meters: Double) {
+        val current = _state.value
+        val case = current.activeCase ?: return
+        if (!current.scouting || case.phase != CasePhase.INVESTIGATING || meters <= 0.0) return
+        saveCase(search(case.copy(walkedMeters = case.walkedMeters + meters), meters))
+    }
+
     /** Debug builds only: counts as walking [meters], so a case can be played sitting down. */
     fun debugWalk(meters: Double = DEBUG_WALK_METERS) {
         if (!BuildConfig.DEBUG) return
@@ -351,16 +515,23 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(debugWalkButton = shown) }
     }
 
-    /** Debug builds only: steps through the states that have cases, then back to the real one. */
-    fun debugNextState() {
-        if (!BuildConfig.DEBUG) return
-        val options = STATE_NAMES.keys.filter { casesIn(it).isNotEmpty() }
-        val next = when (val now = _state.value.debugState) {
-            null -> options.first()
-            options.last() -> null
-            else -> options[options.indexOf(now) + 1]
-        }
-        _state.update { it.copy(debugState = next, areaState = next ?: knownState) }
+    /** Turns traveler mode on or off, and remembers it. Turning it off brings the player home. */
+    fun setTravelerMode(on: Boolean) {
+        prefs.edit { putBoolean(KEY_TRAVELER, on) }
+        _state.update { it.copy(travelerMode = on) }
+        if (!on) travelTo(null)
+    }
+
+    /**
+     * In traveler mode, reads [state]'s paper as if the player were there, or their own again for
+     * null. The choice is kept for next time.
+     */
+    fun travelTo(state: String?) {
+        val current = _state.value
+        val visiting = state?.takeIf { current.travelerMode && it in TRAVEL_STATES }
+        if (visiting == current.visitingState) return
+        prefs.edit { if (visiting == null) remove(KEY_VISITING) else putString(KEY_VISITING, visiting) }
+        _state.update { it.copy(visitingState = visiting, areaState = visiting ?: knownState) }
         offerCases()
     }
 
@@ -376,7 +547,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 putString(KEY_CASE, json.encodeToString(ActiveCase.serializer(), case))
             }
         }
-        _state.update { it.copy(activeCase = case) }
+        // A sighting only lasts while the search does.
+        val searching = case?.phase == CasePhase.INVESTIGATING
+        _state.update {
+            it.copy(
+                activeCase = case,
+                sighting = it.sighting && searching,
+                groundBait = it.groundBait.takeIf { searching },
+            )
+        }
     }
 
     private fun loadStateCell(): Cell? = place.getString(KEY_STATE_CELL, null)?.let { saved ->
@@ -431,6 +610,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         const val KEY_STATE = "state_code"
         const val KEY_STATE_CELL = "state_cell"
         const val KEY_DEBUG_WALK_BUTTON = "debug_walk_button"
+        const val KEY_SCOUTING = "scouting"
+        const val KEY_TRAVELER = "traveler_mode"
+        const val KEY_VISITING = "visiting_state"
         const val LOOKUP_RETRY_MILLIS = 30_000L
         const val DEBUG_WALK_METERS = 25.0
     }

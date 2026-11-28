@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -89,15 +89,38 @@ fun GameApp(viewModel: GameViewModel = viewModel()) {
     val openJournal = { showingJournal = true }
     var showingAbout by rememberSaveable { mutableStateOf(false) }
     var showingRequest by rememberSaveable { mutableStateOf(false) }
+    var showingOptions by rememberSaveable { mutableStateOf(false) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         val case = state.activeCase
         val definition = case?.let { caseById(it.caseId) }
         when {
             !state.safetyAccepted -> SafetyScreen(viewModel::acceptSafety)
+            // About and requests open from Options, and going back from them returns there.
             showingAbout -> AboutScreen { showingAbout = false }
             showingRequest -> RequestCryptidScreen { showingRequest = false }
-            showingJournal -> JournalScreen(state.journal, state.areaState) { showingJournal = false }
+            showingOptions -> OptionsScreen(
+                travelerMode = state.travelerMode,
+                visitingState = state.visitingState,
+                homeState = state.homeState,
+                onTravelerMode = viewModel::setTravelerMode,
+                onTravelTo = viewModel::travelTo,
+                onOpenAbout = { showingAbout = true },
+                // Requests go to the game's contact, so there's nowhere to send one without it.
+                onOpenRequest = if (BuildConfig.GAME_CONTACT.isNotBlank()) ({ showingRequest = true }) else null,
+                debugWalkButton = if (BuildConfig.DEBUG) {
+                    state.debugWalkButton to viewModel::setDebugWalkButton
+                } else {
+                    null
+                },
+                onBack = { showingOptions = false },
+            )
+            showingJournal -> JournalScreen(
+                entries = state.journal,
+                areaState = state.areaState,
+                onOpenOptions = { showingOptions = true },
+                onBack = { showingJournal = false },
+            )
             !hasLocation -> LocationNeededScreen(
                 access = access,
                 promptBlocked = promptBlocked,
@@ -108,11 +131,19 @@ fun GameApp(viewModel: GameViewModel = viewModel()) {
                 CasePhase.LEAD, CasePhase.INVESTIGATING -> InvestigationRoute(state, case, definition, viewModel)
                 CasePhase.ENCOUNTER -> EncounterScreen(
                     creatureId = definition.answerId,
-                    correctDeduction = case.deductionId == definition.answerId,
+                    guessedRight = definition.answerId in case.guesses,
+                    cluesFound = case.cluesFound,
                     scene = definition.scene,
                     region = case.region ?: definition.region,
                     point = state.fix?.point,
                     onFinished = viewModel::finishEncounter,
+                )
+                CasePhase.NAMING -> DeductionScreen(
+                    case = case,
+                    definition = definition,
+                    mode = DeductionMode.NAME,
+                    onBack = null,
+                    onDeduce = viewModel::nameCreature,
                 )
                 CasePhase.DONE -> ResultScreen(case, definition, viewModel::takeAnotherCase, openJournal)
             }
@@ -120,8 +151,10 @@ fun GameApp(viewModel: GameViewModel = viewModel()) {
                 state = state,
                 viewModel = viewModel,
                 onOpenJournal = openJournal,
-                onOpenAbout = { showingAbout = true },
-                onOpenRequest = { showingRequest = true },
+                onOpenOptions = {
+                    showingJournal = true
+                    showingOptions = true
+                },
             )
         }
     }
@@ -140,10 +173,11 @@ private fun InvestigationRoute(
         DeductionScreen(
             case = case,
             definition = definition,
+            mode = DeductionMode.GUESS,
             onBack = { deducing = false },
             onDeduce = { suspectId ->
                 deducing = false
-                viewModel.deduce(suspectId)
+                viewModel.guess(suspectId)
             },
         )
     } else {
@@ -157,6 +191,14 @@ private fun InvestigationRoute(
             onFindShown = viewModel::findShown,
             onDeduce = { deducing = true },
             onDebugWalk = { viewModel.debugWalk() },
+            onDebugSighting = viewModel::debugSighting,
+            onEngage = viewModel::engageSighting,
+            onMissSighting = viewModel::missSighting,
+            onPickUpBait = viewModel::pickUpBait,
+            onUseBait = viewModel::useBait,
+            onDebugBait = viewModel::debugBait,
+            onScoutingChange = viewModel::setScouting,
+            onScout = viewModel::scout,
         )
     }
 }
@@ -166,8 +208,7 @@ private fun WorldStatusScreen(
     state: GameState,
     viewModel: GameViewModel,
     onOpenJournal: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onOpenRequest: () -> Unit,
+    onOpenOptions: () -> Unit,
 ) {
     when (val status = state.status) {
         WorldStatus.WaitingForLocation -> LoadingScreen("Waiting for a GPS signal. Stepping outside can help.")
@@ -179,11 +220,6 @@ private fun WorldStatusScreen(
             onChoose = viewModel::chooseCase,
             onResume = viewModel::resumeCase,
             onOpenJournal = onOpenJournal,
-            onOpenAbout = onOpenAbout,
-            // Requests go to the game's contact, so there's nowhere to send one without it.
-            onOpenRequest = if (BuildConfig.GAME_CONTACT.isNotBlank()) onOpenRequest else null,
-            onDebugNextState = if (BuildConfig.DEBUG) viewModel::debugNextState else null,
-            debugWalkButton = if (BuildConfig.DEBUG) state.debugWalkButton to viewModel::setDebugWalkButton else null,
         )
         WorldStatus.NeedsConnection -> MessageScreen(
             title = "Where are we?",
@@ -191,7 +227,8 @@ private fun WorldStatusScreen(
                 "reports are local. This usually needs a data connection. Once it's found your " +
                 "state, the game remembers it for next time.",
             action = "Try again" to viewModel::retryState,
-            secondary = if (BuildConfig.DEBUG) "Debug: pick a state" to viewModel::debugNextState else null,
+            // A traveler can still read another state's paper.
+            secondary = if (state.travelerMode) "Read another state's paper" to onOpenOptions else null,
         )
     }
 }
@@ -268,7 +305,7 @@ private fun SafetyScreen(onAccept: () -> Unit) {
 @Composable
 private fun LoadingScreen(message: String) {
     Column(
-        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(32.dp),
+        modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -288,8 +325,9 @@ fun MessageScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .systemBarsPadding()
+            .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
+            .readable()
             .padding(28.dp),
         verticalArrangement = Arrangement.Center,
     ) {

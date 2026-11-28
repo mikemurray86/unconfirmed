@@ -6,13 +6,29 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** A correct deduction means you know what you're waiting for: it moves slower and stays longer. */
+/**
+ * Each clue found before the sighting is another shot and a little more time, up to the full roll
+ * once every clue is in. A player who guessed the right creature along the way knows what they're
+ * waiting for, so it moves slower and shows itself more. Without a right guess it's quicker and
+ * harder to make out.
+ */
 data class EncounterSetup(val shots: Int, val speed: Double, val visibilityBias: Double, val durationSeconds: Double) {
     companion object {
-        fun forDeduction(correct: Boolean) = if (correct) {
-            EncounterSetup(shots = 3, speed = 0.55, visibilityBias = 0.35, durationSeconds = 45.0)
-        } else {
-            EncounterSetup(shots = 1, speed = 1.0, visibilityBias = 0.0, durationSeconds = 25.0)
+        /** The film and the time for an encounter once all [CLUES_PER_CASE] clues are in. */
+        const val FULL_SHOTS = 3
+        const val FULL_SECONDS = 45.0
+
+        /** The time lost for each clue still out there when the creature is named. */
+        const val SECONDS_PER_CLUE = 5.0
+
+        fun forSighting(guessedRight: Boolean, cluesFound: Int = CLUES_PER_CASE): EncounterSetup {
+            val missing = (CLUES_PER_CASE - cluesFound).coerceIn(0, CLUES_PER_CASE - 1)
+            return EncounterSetup(
+                shots = (FULL_SHOTS - missing).coerceAtLeast(1),
+                speed = if (guessedRight) 0.55 else 0.75,
+                visibilityBias = if (guessedRight) 0.35 else 0.15,
+                durationSeconds = FULL_SECONDS - SECONDS_PER_CLUE * missing,
+            )
         }
     }
 }

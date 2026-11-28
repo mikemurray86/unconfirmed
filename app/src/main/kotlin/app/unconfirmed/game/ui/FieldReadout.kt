@@ -1,25 +1,16 @@
 package app.unconfirmed.game.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.unconfirmed.shared.Biome
@@ -27,7 +18,6 @@ import app.unconfirmed.shared.GeoPoint
 import app.unconfirmed.shared.SkyState
 import app.unconfirmed.shared.TimeOfDay
 import app.unconfirmed.shared.Weather
-import app.unconfirmed.shared.compassPoint
 import java.util.Locale
 import kotlin.math.abs
 
@@ -105,36 +95,4 @@ fun FieldReadout(
             .then(gestures)
             .padding(horizontal = 8.dp, vertical = 4.dp),
     )
-}
-
-/** A small compass that turns as the player does, with north picked out in amber. */
-@Composable
-fun HeadingDial(headingDegrees: Double, modifier: Modifier = Modifier) {
-    Canvas(
-        modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-            .semantics { contentDescription = "Facing ${compassPoint(headingDegrees)}" },
-    ) {
-        val r = size.minDimension / 2
-        drawCircle(Color(0xFFB1B3A4).copy(alpha = 0.5f), r * 0.82f, style = Stroke(1.dp.toPx()))
-        rotate(-headingDegrees.toFloat()) {
-            val north = Path().apply {
-                moveTo(center.x, center.y - r * 0.7f)
-                lineTo(center.x + r * 0.18f, center.y)
-                lineTo(center.x - r * 0.18f, center.y)
-                close()
-            }
-            val south = Path().apply {
-                moveTo(center.x, center.y + r * 0.7f)
-                lineTo(center.x + r * 0.18f, center.y)
-                lineTo(center.x - r * 0.18f, center.y)
-                close()
-            }
-            drawPath(north, Amber)
-            drawPath(south, Color(0xFFB1B3A4).copy(alpha = 0.6f))
-            drawCircle(Color(0xFF0C0F0D), r * 0.07f, Offset(center.x, center.y))
-        }
-    }
 }

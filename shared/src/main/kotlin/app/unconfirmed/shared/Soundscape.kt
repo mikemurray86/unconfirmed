@@ -19,7 +19,7 @@ import kotlin.random.Random
  *    and a second drone a semitone above the first
  *
  * [chime] plays the cue for a clue turning up: three bright bells rising to a sour note, with the
- * music ducking under it.
+ * music ducking under it. [call] plays a creature's own call when it shows itself, ducked the same way.
  *
  * Call [render] from one audio thread. The other controls may be set from any thread.
  */
@@ -35,6 +35,10 @@ class Soundscape(private val sampleRate: Int = 22_050, seed: Long = 1) {
 
     @Volatile private var chimeRequested = false
 
+    @Volatile private var callRequested: String? = null
+    private var calling: CreatureCall? = null
+    private var calls = 0
+
     private val rate = sampleRate.toFloat()
     private val random = Random(seed)
     private var sample = 0L
@@ -49,6 +53,11 @@ class Soundscape(private val sampleRate: Int = 22_050, seed: Long = 1) {
     /** Plays the cue for a clue turning up. */
     fun chime() {
         chimeRequested = true
+    }
+
+    /** Plays the call of a creature showing itself. [kind] is its call trait, as its audio clue has it. */
+    fun call(kind: String) {
+        callRequested = kind
     }
 
     /** Fills [out] with the next samples, mono, from -1 to 1. */
@@ -282,6 +291,14 @@ class Soundscape(private val sampleRate: Int = 22_050, seed: Long = 1) {
             }
             duck = 1f
         }
+        callRequested?.let { kind ->
+            callRequested = null
+            calling = CreatureCall(kind, rate, seed = calls++)
+            duck = 1f
+        }
+        val call = calling?.let { voice ->
+            voice.next().also { if (voice.done) calling = null }
+        } ?: 0f
         val ease = 1f / (rate * 2.5f)
         tensionNow += (tension.coerceIn(0f, 1f) - tensionNow) * ease
         musicNow += ((if (music) 1f else 0f) - musicNow) * (1f / (rate * 1.5f))
@@ -295,7 +312,7 @@ class Soundscape(private val sampleRate: Int = 22_050, seed: Long = 1) {
             bell = bells(seconds, loud = false) * musicNow
             musicMix = (drone(seconds) + pad(seconds) + wind(seconds) + tense(seconds)) * musicNow
         }
-        val cue = bells(seconds, loud = true)
+        val cue = bells(seconds, loud = true) + call
         val wet = echo(bell + cue * 0.6f)
         // The music dips under the clue cue, then comes back up.
         val mixed = (musicMix + bell * 0.7f) * MUSIC_LEVEL * (1f - 0.55f * duck) + cue + wet * 0.55f

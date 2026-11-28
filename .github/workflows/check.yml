@@ -1,0 +1,47 @@
+# Runs the same checks as `just check` on every push to main and every pull request:
+# ktlint, Android Lint, the unit tests, then a debug build.
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch or pull request cancels the run still going for the old one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Gradle daemon runs on Java 25 (gradle/gradle-daemon-jvm.properties), so installing it
+      # here saves Gradle downloading it.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # Caches Gradle's downloads between runs and checks the wrapper jar is genuine.
+      - uses: gradle/actions/setup-gradle@v6
+
+      # The runner already has the Android SDK. AGP downloads any platform or build tools it lacks.
+      # GAME_CONTACT is left unset, as the checks don't need it.
+      - name: Lint, test and build
+        run: ./gradlew ktlintCheck :app:lintDebug :shared:test :app:assembleDebug
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reports
+          path: |
+            app/build/reports/
+            shared/build/reports/

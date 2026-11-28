@@ -3,6 +3,7 @@ package app.unconfirmed.game.ui
 import android.provider.Settings
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
@@ -58,8 +59,19 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-/** How many degrees of the panorama fit across the screen. */
+/** How many degrees of the panorama fit across the screen's shorter side. */
 private const val FIELD_OF_VIEW = 70f
+
+/** The most of the panorama a wide screen shows from edge to edge, so a phone on its side isn't a fish-eye strip. */
+private const val WIDEST_VIEW = 120f
+
+/**
+ * Screen pixels per degree of the panorama, for a scene [width] by [height]. A portrait screen
+ * shows [FIELD_OF_VIEW] across, as it always has. A landscape one keeps the same scale for its
+ * shorter side and sees further round to the left and right, up to [WIDEST_VIEW].
+ */
+fun scenePxPerDegree(width: Float, height: Float): Float =
+    maxOf(minOf(width, height) / FIELD_OF_VIEW, width / WIDEST_VIEW)
 
 /** The horizon, as a fraction of the way down the scene. */
 private const val HORIZON = 0.5f
@@ -75,6 +87,18 @@ private const val WALKING_PACE = 1.4
 
 /** The player's eye height in metres, which sets how far below the horizon the ground lies. */
 private const val EYE_HEIGHT = 1.6f
+
+/**
+ * Where on a scene of [width] by [height] pixels a spot on the ground [distance] metres away at
+ * [bearing] falls, when facing [heading], for laying something over the scene. It's at the scale
+ * of the nearest layer, so it turns with the ground.
+ */
+fun sceneGroundPoint(width: Float, height: Float, heading: Double, bearing: Double, distance: Float): Offset {
+    val pxPerDegree = scenePxPerDegree(width, height)
+    val focal = pxPerDegree * (180f / PI.toFloat())
+    val x = width / 2 + turnDegrees(heading, bearing).toFloat() * pxPerDegree
+    return Offset(x, height * HORIZON + focal * EYE_HEIGHT / distance)
+}
 
 /** Things closer than this, in metres, fade out rather than filling the screen. */
 private const val NEAR_CLIP = 1.2f
@@ -117,6 +141,10 @@ fun FirstPersonScene(
     modifier: Modifier = Modifier,
     creature: SceneCreature? = null,
     frozenAt: Float? = null,
+    /** True when [walkedMeters] already moves smoothly, as it does with the scouting stick. */
+    steadyStride: Boolean = false,
+    /** Kept up to date with where [creature] is on screen, when given. */
+    hit: CreatureHit? = null,
 ) {
     val context = LocalContext.current
     val animate = remember(frozenAt) {
@@ -140,7 +168,7 @@ fun FirstPersonScene(
     SideEffect { lastWalked = walkedMeters }
     val stride by animateFloatAsState(
         walkedMeters.toFloat(),
-        tween(durationMillis = stepMillis, easing = LinearEasing),
+        if (steadyStride) snap() else tween(durationMillis = stepMillis, easing = LinearEasing),
         label = "stride",
     )
     val layout = remember(scene, region) { layoutFor(scene, region) }
@@ -181,6 +209,7 @@ fun FirstPersonScene(
             drawMist(view, layer, palette)
         }
         drawWorld(view, layout, walker, palette, seconds, creature)
+        hit?.bounds = creature?.let { creatureBounds(view, it) }
         hint?.let { drawHint(view, it, palette, seconds) }
     }
 }
@@ -247,7 +276,17 @@ class SceneCreature(
     val stride: Float,
     val fill: Float = ART_FILL,
     val footprint: Float = 0.4f,
+    /** A soft light round it, from 0 to 1, so a creature showing itself during the search catches the eye. */
+    val glow: Float = 0f,
 )
+
+/**
+ * Where the creature was last drawn on screen, in the scene's own pixels, or null when it's off
+ * screen or there isn't one. It's written as the scene draws, for telling whether a tap hit it.
+ */
+class CreatureHit {
+    var bounds: Rect? = null
+}
 
 /** Most creature art fills about this much of its square box, from head to feet. */
 const val ART_FILL = 0.9f
@@ -757,7 +796,10 @@ private class View(scope: DrawScope, val heading: Double, val bob: Float) {
     val height = scope.size.height
     val center = width / 2
     val horizon = height * HORIZON + bob
-    val pxPerDegree = width / FIELD_OF_VIEW
+    val pxPerDegree = scenePxPerDegree(width, height)
+
+    /** How many degrees of the panorama are on screen, edge to edge. */
+    val fieldOfView = width / pxPerDegree
 
     /** Pixels per metre of height at one metre away, for drawing things in perspective. */
     val focal = pxPerDegree * (180f / PI.toFloat())
@@ -1226,7 +1268,7 @@ private fun DrawScope.drawWorld(
         val r = hypot(dx, dy)
         if (r < NEAR_CLIP) continue
         val bearing = Math.toDegrees(atan2(dx, dy).toDouble())
-        if (abs(turnDegrees(view.heading, bearing)) > FIELD_OF_VIEW / 2 + 30) continue
+        if (abs(turnDegrees(view.heading, bearing)) > view.fieldOfView / 2 + 30) continue
         val x = view.x(bearing, NEAR_PARALLAX)
         val s = view.focal * thing.height / r
         if (!view.visible(x, s)) continue
@@ -1338,6 +1380,20 @@ private fun DrawScope.drawCreature(
     }
     val feet = ground - lift
 
+    if (c.glow > 0f) {
+        val middle = Offset(x, feet - height * 0.5f)
+        val reach = height * 0.95f
+        drawCircle(
+            Brush.radialGradient(
+                listOf(palette.moon.copy(alpha = 0.5f * c.glow * vis), Color.Transparent),
+                center = middle,
+                radius = reach,
+            ),
+            reach,
+            middle,
+        )
+    }
+
     if (c.motion == CreatureMotion.SWIMS) {
         // Rings spreading out across the water round it.
         repeat(3) { k ->
@@ -1411,6 +1467,19 @@ private fun DrawScope.drawCreature(
             }
         }
     }
+}
+
+/** The box the creature fills on screen, as [drawCreature] places it, or null when it's off screen. */
+private fun creatureBounds(view: View, c: SceneCreature): Rect? {
+    if (c.visibility <= 0.01f) return null
+    val x = view.x(c.bearing, NEAR_PARALLAX)
+    val height = view.focal * c.heightMeters / c.distance
+    val side = height / c.fill
+    if (!view.visible(x, side * 0.4f)) return null
+    val ground = view.horizon + view.focal * EYE_HEIGHT / c.distance
+    val lift = if (c.motion == CreatureMotion.FLIES) view.focal * 1.6f / c.distance else 0f
+    val feet = ground - lift
+    return Rect(x - side * 0.4f, feet - height, x + side * 0.4f, feet)
 }
 
 /** Which of [count] frames, spread evenly over one stride, to show at [gait] radians into it. */
@@ -2181,7 +2250,7 @@ private fun DrawScope.drawHint(view: View, bearing: Double, palette: Palette, t:
     val glow = Color(0xFFFFC85A)
     val pulse = 0.65f + 0.35f * sin(t * 2.2f)
     val turn = turnDegrees(view.heading, bearing).toFloat()
-    if (abs(turn) < FIELD_OF_VIEW / 2 - 4) {
+    if (abs(turn) < view.fieldOfView / 2 - 4) {
         val x = view.x(bearing, NEAR_PARALLAX)
         val depths = listOf(0.92f, 0.66f, 0.46f, 0.32f, 0.22f)
         depths.forEachIndexed { i, depth ->

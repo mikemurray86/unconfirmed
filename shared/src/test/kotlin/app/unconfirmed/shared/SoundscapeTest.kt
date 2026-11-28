@@ -40,6 +40,19 @@ class SoundscapeTest {
     }
 
     @Test
+    fun `every creature call stands out from the music and stays in range`() {
+        for (kind in listOf(CALL_SHRILL, CALL_HOWL, CALL_SPLASH, CALL_VOICE, CALL_KNOCK, CALL_NONE)) {
+            val sound = Soundscape(rate)
+            sound.seconds(5f)
+            val before = rms(sound.seconds(1.5f))
+            sound.call(kind)
+            val call = sound.seconds(1.5f)
+            assertTrue(rms(call) > before * 1.3f, "$kind: ${rms(call)} against music $before")
+            assertTrue(peak(call) <= 1f, "$kind peaks at ${peak(call)}")
+        }
+    }
+
+    @Test
     fun `tension makes it heavier`() {
         val calm = Soundscape(rate, seed = 3)
         val tense = Soundscape(rate, seed = 3).apply { tension = 1f }
